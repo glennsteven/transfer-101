@@ -1,0 +1,22 @@
+services:
+  recovery-race:
+    profiles: ["test"]
+    image: golang:1.26.10-bookworm
+    working_dir: /workspace
+    environment:
+      TEST_DATABASE_URL: 'postgres://transfer_test:transfer_test@postgres-test:5432/transfer_test?sslmode=disable&connect_timeout=3'
+      DBMATE_BIN: /workspace/bin/integration/dbmate
+      DBMATE_MIGRATIONS_DIR: /workspace/bin/integration/migrations
+      MOCK_BANK_MIGRATIONS_DIR: /workspace/bin/integration/mockbank-migrations
+      PROVIDER_DEMO_BIN: /workspace/bin/integration/demo-provider
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '1'
+    volumes:
+      - .:/workspace:ro
+      - recovery_go_cache:/root/.cache/go-build
+      - recovery_go_modules:/go/pkg/mod
+    command: ["go", "test", "-race", "-tags=integration", "-count=5", "-timeout=180s", "-run", "TestPostgresRecovery|TestRecoveryBackoff|TestInquiryNotFound", "./internal/transfer"]
+
+volumes:
+  recovery_go_cache:
+  recovery_go_modules:

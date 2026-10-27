@@ -1,0 +1,18 @@
+[
+  {
+    "token": "demo-merchant-a-token",
+    "merchant": {
+      "id": "merchant_a",
+      "source_account_id": "funds_a",
+      "provider_account_id": "bank_account_demo_a"
+    }
+  },
+  {
+    "token": "demo-merchant-b-token",
+    "merchant": {
+      "id": "merchant_b",
+      "source_account_id": "funds_b",
+      "provider_account_id": "bank_account_demo_a"
+    }
+  }
+]

@@ -1,0 +1,71 @@
+name: verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: transfer_test
+          POSTGRES_PASSWORD: transfer_test
+          POSTGRES_DB: transfer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U transfer_test -d transfer_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://transfer_test:transfer_test@localhost:5432/transfer_test?sslmode=disable&connect_timeout=3
+      DBMATE_BIN: /home/runner/go/bin/dbmate
+      DBMATE_MIGRATIONS_DIR: ${{ github.workspace }}/internal/transfer/migrations
+      MOCK_BANK_MIGRATIONS_DIR: ${{ github.workspace }}/internal/mockbank/migrations
+      GOTOOLCHAIN: local
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.10'
+
+      - name: Install pinned dbmate
+        run: go install github.com/amacneil/dbmate/v2@v2.28.0
+
+      - name: Format
+        run: test -z "$(gofmt -l cmd internal)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test -count=1 ./...
+
+      - name: PostgreSQL integration and process tests
+        run: go test -tags=integration -count=1 -timeout=10m ./...
+
+      - name: Focused concurrency and recovery tests (20 repetitions)
+        run: >-
+          go test -tags=integration -count=20 -timeout=15m
+          -run 'TestPostgres(FundsConcurrent|Reconciliation(FinalizesOnceAcrossRepeatedConcurrentReports|ConcurrentInquiryAndReport)|Recovery|ConcurrentIdenticalRequests|ConcurrentPayloadConflict|DispatchClaimCommittedAndUnlocked|StructuredTransferLogs)'
+          ./internal/transfer
+
+      - name: Race detector unit tests
+        run: go test -race -count=1 ./...
+
+      - name: Race detector with PostgreSQL integration
+        run: go test -race -tags=integration -count=1 -timeout=15m ./...

@@ -1,0 +1,164 @@
+[tools]
+go = "1.26.10"
+dbmate = "2.28.0"
+
+[env]
+_.file = [".env.example", ".env.mockbank.example", ".env", ".env.mockbank"]
+
+[tasks."env:init"]
+description = "Buat file env lokal yang belum tersedia; pertahankan file existing"
+run = '''
+if [ ! -f .env ]; then cp .env.example .env; fi
+if [ ! -f .env.mockbank ]; then cp .env.mockbank.example .env.mockbank; fi
+'''
+
+[tasks."db:up"]
+description = "Jalankan PostgreSQL aplikasi dan mock bank, tunggu healthy"
+run = "docker compose up -d --wait postgres postgres-bank"
+
+[tasks."db:stop"]
+description = "Hentikan kedua database demo tanpa menghapus volume"
+run = "docker compose stop postgres postgres-bank"
+
+[tasks.migrate]
+description = "Terapkan migrasi dbmate aplikasi dan mock bank"
+depends = ["env:init", "db:up"]
+run = [
+  "dbmate --migrations-dir internal/transfer/migrations --migrations-table dbmate_schema_migrations --no-dump-schema up",
+  "dbmate --env MOCK_BANK_DATABASE_URL --env-file .env.mockbank --migrations-dir internal/mockbank/migrations --migrations-table dbmate_schema_migrations --no-dump-schema up",
+]
+
+[tasks."db:status"]
+description = "Lihat status migrasi kedua database"
+run = [
+  "dbmate --migrations-dir internal/transfer/migrations --migrations-table dbmate_schema_migrations --no-dump-schema status",
+  "dbmate --env MOCK_BANK_DATABASE_URL --env-file .env.mockbank --migrations-dir internal/mockbank/migrations --migrations-table dbmate_schema_migrations --no-dump-schema status",
+]
+
+[tasks.build]
+description = "Build binary API, mock bank, worker, dan CLI demo"
+run = "go build -o bin/local/ ./cmd/api ./cmd/mockbank ./cmd/worker ./cmd/demo-provider ./cmd/funds ./cmd/reconcile ./cmd/loadtest"
+
+[tasks.setup]
+description = "Siapkan env, database, migrasi, dan binary lokal"
+depends = ["migrate", "build"]
+
+[tasks.api]
+description = "Jalankan API foreground setelah setup"
+run = "exec ./bin/local/api"
+
+[tasks.bank]
+description = "Jalankan mock bank foreground sesuai .env.mockbank"
+run = "exec ./bin/local/mockbank"
+
+[tasks."bank:504"]
+description = "Mock bank menyimpan SUCCESS lalu merespons 504"
+env = { MOCK_BANK_SCENARIO = "success_504" }
+run = "exec ./bin/local/mockbank"
+
+[tasks.worker]
+description = "Jalankan worker inquiry/recovery foreground setelah setup"
+run = "exec ./bin/local/worker"
+
+[tasks."funds:init"]
+description = "Inisialisasi saldo pembuka simulasi merchant secara eksplisit"
+run = '''
+exec ./bin/local/funds init "$@"
+'''
+
+[tasks."funds:show"]
+description = "Tampilkan saldo simulasi merchant"
+run = '''
+exec ./bin/local/funds show "$@"
+'''
+
+[tasks.reconcile]
+description = "Jalankan CLI ekspor/import/tampilkan audit rekonsiliasi"
+run = '''
+exec ./bin/local/reconcile "$@"
+'''
+
+[tasks.loadtest]
+description = "Load test loopback API lalu audit invariants PostgreSQL run"
+run = '''
+exec ./bin/local/loadtest "$@"
+'''
+
+[tasks.dev]
+description = "Setup lalu jalankan API, mock bank, worker bersama; Ctrl+C untuk berhenti"
+depends = ["setup"]
+run = "mise run --jobs 3 --output prefix api ::: bank ::: worker"
+
+[tasks."dev:504"]
+description = "Jalankan seluruh proses dengan skenario bank SUCCESS + HTTP 504"
+depends = ["setup"]
+run = "mise run --jobs 3 --output prefix api ::: bank:504 ::: worker"
+
+[tasks.demo]
+description = "Kirim transfer ke proses lokal aktif dan tunggu SUCCESS"
+depends = ["build"]
+run = '''
+#!/bin/sh
+set -eu
+if [ "$#" -gt 1 ]; then
+    printf '%s\n' 'Usage: mise run demo [REFERENCE]' >&2
+    exit 2
+fi
+reference=${1:-mise-$(date -u +%Y%m%dT%H%M%S)-$$}
+export DEMO_API_URL="${DEMO_API_URL:-http://$HTTP_ADDR}"
+export DEMO_BANK_URL="${DEMO_BANK_URL:-$MOCK_BANK_URL}"
+exec ./bin/local/demo-provider "$reference" ANY SUCCEEDED SUCCESS
+'''
+
+[tasks.test]
+description = "Jalankan unit tests dengan race detector, tanpa PostgreSQL"
+run = "go test -race -count=1 -timeout=60s ./..."
+
+[tasks."test:db"]
+description = "Jalankan PostgreSQL test terpisah dari demo"
+run = "docker compose --profile test up -d --wait postgres-test"
+
+[tasks."test:prepare"]
+description = "Build dan salin binary/migrasi ke container test sesuai arsitektur tujuan"
+depends = ["test:db"]
+hide = true
+run = '''
+test_machine=$(docker compose exec -T postgres-test uname -m)
+case "$test_machine" in
+    aarch64|arm64) test_arch=arm64 ;;
+    x86_64|amd64) test_arch=amd64 ;;
+    *) printf 'Unsupported test container architecture: %s\n' "$test_machine" >&2; exit 1 ;;
+esac
+sh scripts/build-container-tests.sh "$test_arch"
+docker compose exec -T postgres-test mkdir -p /tmp/transfer-101-tests
+docker compose cp bin/integration/. postgres-test:/tmp/transfer-101-tests
+'''
+
+[tasks."test:e2e"]
+description = "Uji HTTP API + mock bank + worker + CLI otomatis pada database test"
+depends = ["test:prepare"]
+run = "docker compose exec -T -e 'TEST_DATABASE_URL=postgres://transfer_test:transfer_test@127.0.0.1:5432/transfer_test?sslmode=disable&connect_timeout=3' -e DBMATE_BIN=/tmp/transfer-101-tests/dbmate -e DBMATE_MIGRATIONS_DIR=/tmp/transfer-101-tests/migrations -e MOCK_BANK_MIGRATIONS_DIR=/tmp/transfer-101-tests/mockbank-migrations -e PROVIDER_DEMO_BIN=/tmp/transfer-101-tests/demo-provider postgres-test /tmp/transfer-101-tests/api.test -test.run '^TestPostgresAPIStartupAndRoutes$' -test.v -test.timeout=120s"
+
+[tasks."test:integration"]
+description = "Jalankan kelima suite lengkap pada PostgreSQL asli"
+depends = ["test:prepare"]
+run = "docker compose exec -T -e 'TEST_DATABASE_URL=postgres://transfer_test:transfer_test@127.0.0.1:5432/transfer_test?sslmode=disable&connect_timeout=3' postgres-test sh /tmp/transfer-101-tests/run-container-tests.sh /tmp/transfer-101-tests"
+
+[tasks."test:recovery"]
+description = "Ulang focused recovery PostgreSQL sepuluh kali"
+depends = ["test:prepare"]
+run = "docker compose exec -T -e 'TEST_DATABASE_URL=postgres://transfer_test:transfer_test@127.0.0.1:5432/transfer_test?sslmode=disable&connect_timeout=3' -e DBMATE_BIN=/tmp/transfer-101-tests/dbmate -e DBMATE_MIGRATIONS_DIR=/tmp/transfer-101-tests/migrations -e MOCK_BANK_MIGRATIONS_DIR=/tmp/transfer-101-tests/mockbank-migrations postgres-test /tmp/transfer-101-tests/transfer.test -test.run '^TestPostgresRecovery' -test.count=10 -test.timeout=180s"
+
+[tasks."test:race"]
+description = "Seluruh package + PostgreSQL dengan race detector dalam Go SDK container"
+depends = ["test:prepare"]
+run = "docker compose -f compose.yaml -f compose.race.yaml --profile test run --rm --no-deps recovery-race go test -race -tags=integration -count=1 -timeout=180s ./..."
+
+[tasks."test:recovery:race"]
+description = "Focused recovery PostgreSQL + race detector lima kali"
+depends = ["test:prepare"]
+run = "docker compose -f compose.yaml -f compose.race.yaml --profile test run --rm --no-deps recovery-race"
+
+[tasks."test:stop"]
+description = "Hentikan hanya database test; tmpfs test bersifat sementara"
+run = "docker compose --profile test stop postgres-test"
