@@ -248,3 +248,48 @@ JSON logs contain transaction_id, provider_reference, operation, attempt, durati
 - Static bearer tokens and loopback HTTP, without TLS/online rotation/HA/real banks. Local tests do not establish production readiness.
 
 The article and presentation material are prepared locally for review. Pushes, deployments, and publication are not performed automatically.
+
+## Run the container image on a Linux VPS
+
+Build the three service images from the repository root. Each target contains
+its own service binary and starts it as UID/GID 65532.
+
+```sh
+docker build --target api -t transfer-101-api:local .
+docker build --target worker -t transfer-101-worker:local .
+docker build --target mockbank -t transfer-101-mockbank:local .
+```
+
+For a combined image that also includes the funds and reconcile commands,
+use `docker build -t transfer-101:local .`. Its default command starts the API.
+The build excludes local configuration and credentials.
+
+The following example uses Linux host networking because the provider client
+and mock bank require loopback. The API listens on `127.0.0.1:8080`; point a
+host reverse proxy there for HTTPS access. The bank stays on `127.0.0.1:8081`.
+
+1. Prepare the two PostgreSQL databases and apply both sets of migrations as
+   described in the migration section above. Stop existing writers before migrating.
+2. Create `/etc/transfer-101/config/merchants.json` and
+   `/etc/transfer-101/config/provider-accounts.json` using the JSON structures
+   in `config/` and your own credentials. Allow UID 65532 to read these files.
+3. Create `/etc/transfer-101/app.env` with `DATABASE_URL`,
+   `MERCHANT_CREDENTIALS_FILE=/app/config/merchants.json`, and
+   `PROVIDER_CREDENTIALS_FILE=/app/config/provider-accounts.json`.
+   In `/etc/transfer-101/bank.env`, set `MOCK_BANK_DATABASE_URL` and
+   `MOCK_BANK_CREDENTIALS_FILE=/app/config/provider-accounts.json`.
+   Use unquoted values in these Docker env files.
+
+```sh
+config=/etc/transfer-101/config
+docker run -d --name transfer-bank --restart unless-stopped --network host \
+  --env-file /etc/transfer-101/bank.env \
+  -v "$config/provider-accounts.json:/app/config/provider-accounts.json:ro" \
+  transfer-101-mockbank:local
+docker run -d --name transfer-api --restart unless-stopped --network host \
+  --env-file /etc/transfer-101/app.env -v "$config:/app/config:ro" transfer-101-api:local
+docker run -d --name transfer-worker --restart unless-stopped --network host \
+  --env-file /etc/transfer-101/app.env -v "$config:/app/config:ro" \
+  transfer-101-worker:local
+curl -fsS http://127.0.0.1:8080/readyz
+```
