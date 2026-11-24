@@ -35,13 +35,29 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config, logger *slog.Logger) error {
-	credentials, err := transfer.LoadCredentials(cfg.CredentialsFile)
+	credentials, err := loadSecret("MERCHANT_CREDENTIALS_JSON", cfg.CredentialsFile, transfer.ParseCredentials, transfer.LoadCredentials)
 	if err != nil {
 		return err
 	}
-	providerCredentials, err := transfer.LoadProviderCredentials(cfg.ProviderCredentialsFile)
+	providerCredentials, err := loadSecret("PROVIDER_CREDENTIALS_JSON", cfg.ProviderCredentialsFile, transfer.ParseProviderCredentials, transfer.LoadProviderCredentials)
 	if err != nil {
 		return err
+	}
+	host, _, err := net.SplitHostPort(cfg.HTTPAddr)
+	if err != nil {
+		return err
+	}
+	if host != "localhost" && !net.ParseIP(host).IsLoopback() {
+		for _, c := range credentials {
+			if isExampleToken(c.Token) {
+				return errors.New("demo merchant tokens are restricted to loopback")
+			}
+		}
+		for _, c := range providerCredentials {
+			if isExampleToken(c.Token) {
+				return errors.New("demo provider tokens are restricted to loopback")
+			}
+		}
 	}
 	provider, err := transfer.NewProviderClient(cfg.BankURL, providerCredentials, cfg.ProviderTimeout)
 	if err != nil {
@@ -111,4 +127,19 @@ func serve(ctx context.Context, server *http.Server, listener net.Listener, time
 	}
 	logger.Info("shutdown complete")
 	return nil
+}
+
+func loadSecret[T any](name, path string, parse func([]byte) (T, error), loadFile func(string) (T, error)) (T, error) {
+	if value, exists := os.LookupEnv(name); exists {
+		return parse([]byte(value))
+	}
+	return loadFile(path)
+}
+
+func isExampleToken(token string) bool {
+	switch token {
+	case "demo-merchant-a-token", "demo-merchant-b-token", "demo-bank-account-a-token", "demo-bank-account-b-token":
+		return true
+	}
+	return false
 }

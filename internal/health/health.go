@@ -9,9 +9,11 @@ import (
 
 func NewHandler(ping func(context.Context) error, timeout time.Duration) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, r *http.Request) {
+	live := func(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, http.StatusOK, "{\"status\":\"alive\"}\n")
-	})
+	}
+	mux.HandleFunc("GET /livez", live)
+	mux.HandleFunc("GET /healthz", live)
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
