@@ -27,6 +27,10 @@ func LoadCredentials(path string) ([]Credential, error) {
 	if err != nil {
 		return nil, errors.New("cannot read merchant credentials file")
 	}
+	return ParseCredentials(data)
+}
+
+func ParseCredentials(data []byte) ([]Credential, error) {
 	if len(data) > 64*1024 {
 		return nil, errors.New("merchant credentials file exceeds 64 KiB")
 	}

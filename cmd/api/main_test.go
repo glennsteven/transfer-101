@@ -166,3 +166,21 @@ func pipeHTTP(t *testing.T) (*pipeListener, *http.Client) {
 	})
 	return listener, client
 }
+
+func TestPublicListenerRejectsExampleSecrets(t *testing.T) {
+	configEnv(t)
+	t.Setenv("HTTP_ADDR", "0.0.0.0:8080")
+	t.Setenv("MERCHANT_CREDENTIALS_JSON", `[{"token":"demo-merchant-a-token","merchant":{"id":"m","source_account_id":"s","provider_account_id":"p"}}]`)
+	t.Setenv("PROVIDER_CREDENTIALS_JSON", `[{"token":"demo-bank-account-a-token","provider_account_id":"p"}]`)
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run(context.Background(), cfg, testLogger()); err == nil || err.Error() != "demo merchant tokens are restricted to loopback" {
+		t.Fatalf("expected demo merchant token rejection, got %v", err)
+	}
+	t.Setenv("MERCHANT_CREDENTIALS_JSON", `[{"token":"synthetic-test-merchant","merchant":{"id":"m","source_account_id":"s","provider_account_id":"p"}}]`)
+	if err := run(context.Background(), cfg, testLogger()); err == nil || err.Error() != "demo provider tokens are restricted to loopback" {
+		t.Fatalf("expected demo provider token rejection, got %v", err)
+	}
+}

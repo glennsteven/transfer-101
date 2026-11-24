@@ -16,10 +16,12 @@ func TestLivenessDoesNotCallDatabase(t *testing.T) {
 		t.Fatal("liveness must not call the database")
 		return nil
 	}, time.Second)
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/livez", nil))
-	if w.Code != http.StatusOK || w.Body.String() != "{\"status\":\"alive\"}\n" {
-		t.Fatalf("unexpected liveness: %d %s", w.Code, w.Body.String())
+	for _, path := range []string{"/livez", "/healthz"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK || w.Body.String() != "{\"status\":\"alive\"}\n" {
+			t.Fatalf("unexpected liveness: %d %s", w.Code, w.Body.String())
+		}
 	}
 }
 

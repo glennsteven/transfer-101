@@ -35,6 +35,13 @@ func LoadProviderCredentials(path string) ([]ProviderCredential, error) {
 	if err != nil || len(data) > 65536 {
 		return nil, errors.New("cannot read provider credentials or file exceeds 64 KiB")
 	}
+	return ParseProviderCredentials(data)
+}
+
+func ParseProviderCredentials(data []byte) ([]ProviderCredential, error) {
+	if len(data) > 65536 {
+		return nil, errors.New("provider credentials exceed 64 KiB")
+	}
 	var credentials []ProviderCredential
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

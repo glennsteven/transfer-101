@@ -14,6 +14,7 @@ USER 65532:65532
 
 FROM runtime AS api
 COPY --from=build /out/api /usr/local/bin/api
+EXPOSE 8080
 CMD ["/usr/local/bin/api"]
 
 FROM runtime AS worker
@@ -35,4 +36,5 @@ CMD ["/usr/local/bin/transfer-migrate"]
 
 FROM runtime AS all
 COPY --from=build /out/ /usr/local/bin/
+EXPOSE 8080
 CMD ["/usr/local/bin/api"]
