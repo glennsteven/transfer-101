@@ -1,0 +1,8 @@
+FROM golang:1.26 AS migrate
+WORKDIR /app
+ARG TARGETARCH
+RUN --mount=type=bind,source=scripts/install-dbmate.sh,target=/tmp/install-dbmate.sh sh /tmp/install-dbmate.sh "$TARGETARCH"
+COPY internal/transfer/migrations/ internal/transfer/migrations/
+COPY --chmod=0555 scripts/migrate.sh /usr/local/bin/transfer-migrate
+USER 65532:65532
+CMD ["/usr/local/bin/transfer-migrate"]
