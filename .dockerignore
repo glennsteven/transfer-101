@@ -6,3 +6,7 @@
 !cmd/**
 !internal/
 !internal/**
+!scripts/
+scripts/*
+!scripts/install-dbmate.sh
+!scripts/migrate.sh
